@@ -100,6 +100,59 @@ function! s:run_diff()
   return diff
 endfunction
 
+function! s:get_diff_for_hunk(hunk_idx)
+  let cmd = 'git diff --no-ext-diff ' . shellescape(s:current_file())
+  let output = system(s:command_in_directory_of_current_file(cmd))
+  if len(output) == 0
+    return []
+  endif
+  let diff_parts = split(output, '@@\ [-+][0-9]\+,[0-9]\+\ [-+][0-9]\+,[0-9]\+\ @@')
+  if len(diff_parts) < 2 || len(diff_parts) < (a:hunk_idx+1)
+    return []
+  endif
+  let cmd = 'git diff --no-ext-diff ' . shellescape(s:current_file()) . ' | grep -e "^@@ "'
+  let output = system(s:command_in_directory_of_current_file(cmd))
+  let hunk_range_tags = split(output, '\n')
+  let patch = diff_parts[0] . hunk_range_tags[a:hunk_idx] . diff_parts[a:hunk_idx+1]
+  return patch
+endfunction
+
+function! GitGutterStageHunk()
+  call GitGutter()
+  let hunks = GitGutterGetHunks()
+  if len(hunks) == 0
+    echo 'gitgutter: no hunks available'
+    return
+  endif
+  let hunk_index = 0
+  let hunk_found = 0
+  let curr_line = line('.')
+  for h in hunks
+    let start_pos = h[2]
+    let end_pos = start_pos + h[3]
+    if (curr_line >= start_pos && curr_line <= end_pos)
+      let hunk_found = 1
+      break
+    endif
+    let hunk_index = hunk_index + 1
+  endfor
+  if (hunk_found == 0)
+    echo 'gitgutter: current line is not within a hunk'
+    return
+  endif
+  let patch_data = s:get_diff_for_hunk(hunk_index)
+  let fname = tempname()
+  call Decho(fname)
+  let lines = split(patch_data, '\n')
+  call writefile(lines, fname)
+  let cmd = 'git apply --cached >/dev/null 2>&1 ' . fname
+  call system(s:command_in_directory_of_current_file(cmd))
+  if v:shell_error
+    echo 'gitgutter: ERROR : failed to stage hunk'
+  endif
+  call GitGutter()
+endfunction
+
 function! s:parse_diff(diff)
   let hunk_re = '^@@ -\(\d\+\),\?\(\d*\) +\(\d\+\),\?\(\d*\) @@'
   let hunks = []
