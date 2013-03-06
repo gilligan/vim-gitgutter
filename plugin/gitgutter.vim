@@ -1,7 +1,7 @@
-if exists('g:loaded_gitgutter') || !executable('git') || &cp
-  finish
-endif
-let g:loaded_gitgutter = 1
+"if exists('g:loaded_gitgutter') || !executable('git') || &cp
+  "finish
+"endif
+"let g:loaded_gitgutter = 1
 
 " Initialisation {{{
 
@@ -31,6 +31,8 @@ function! s:init()
     let s:next_sign_id = s:first_sign_id
     let s:sign_ids = {}  " key: filename, value: list of sign ids
     let s:other_signs = []
+    let s:buffer_cache = tempname()
+    let s:stage_cache = tempname()
 
     let g:gitgutter_initialised = 1
   endif
@@ -115,6 +117,13 @@ endfunction
 
 function! s:run_diff()
   let cmd = 'git diff --no-ext-diff --no-color -U0 ' . shellescape(s:current_file()) .
+        \ ' | grep -e "^@@ "'
+  let diff = system(s:command_in_directory_of_current_file(cmd))
+  return diff
+endfunction
+
+function! s:run_file_diff(buffer_cache, stage_cache)
+  let cmd = 'git diff --no-ext-diff --no-index --no-color -U0 -- ' . a:stage_cache . ' ' . a:buffer_cache .
         \ ' | grep -e "^@@ "'
   let diff = system(s:command_in_directory_of_current_file(cmd))
   return diff
@@ -396,6 +405,29 @@ function! GitGutterPrevHunk()
 endfunction
 command GitGutterPrevHunk call GitGutterPrevHunk()
 
+function! GitGutterDiffUpdate()
+    echomsg 'update'
+
+  " save current file contents
+  call writefile(getline(1,'$'), s:buffer_cache)
+
+  " get staged contents
+  let cmd = 'git ls-tree --name-only --full-name HEAD ' . expand('%:t')
+  let git_relative_path = system(s:command_in_directory_of_current_file(cmd))[:-2]
+  echo '"' . git_relative_path . '"'
+  let cmd = 'git show :' . git_relative_path  . ' > ' . s:stage_cache
+  call system(s:command_in_directory_of_current_file(cmd))
+
+  " process diff and show signs
+  let diff = s:run_file_diff(s:buffer_cache, s:stage_cache)
+  let s:hunks = s:parse_diff(diff)
+  let modified_lines = s:process_hunks(s:hunks)
+  let file_name = s:current_file()
+  call s:clear_signs(file_name)
+  call s:find_other_signs(file_name)
+  call s:show_signs(file_name, modified_lines)
+endfunction
+
 " Returns the git-diff hunks for the current file or an empty list if there
 " aren't any hunks.
 "
@@ -420,8 +452,13 @@ endfunction
 augroup gitgutter
   autocmd!
   autocmd BufReadPost,BufWritePost,FileReadPost,FileWritePost,FocusGained * call GitGutter()
+  autocmd CursorHoldI * call GitGutterDiffUpdate()
 augroup END
+
+
+" this should also be marked
+
+" this is not staged
 
 " }}}
 
-" vim:set et sw=2 fdm=marker:
